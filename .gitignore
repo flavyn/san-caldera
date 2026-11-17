@@ -1,0 +1,6 @@
+out/
+out-repeat/
+preview-*.png
+requirements-live.json
+browser-*.mjs
+verification.json

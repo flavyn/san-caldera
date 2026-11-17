@@ -1,79 +1,33 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
+/* Photography uses actual entities + renderer at a frozen simulation tick. */
+H.setupShot = (s, name) => {
+  s.shot = name; s.time = 42; s.ticks = 2520; s.elapsed = 1500; s.mode = name === 'title' ? 'title' : 'play'; s.messageUntil = 0;
+  s.cars = []; s.peds = []; s.police = [];
+  Object.assign(s.player, { x: -3.5, z: 6, yaw: 0, money: 3690, health: 86, armour: 62, aiming: true, magazine: 8 });
+  Object.assign(s.mission, { index: 1, stage: 1, active: true, shots: 2 });
+  const addCar = (x,z,color,yaw=0,type='civilian') => { const c=H.vehicle(x,z,color,yaw,type); c.parked=true; s.cars.push(c); return c; };
+  addCar(-6.4,21,'#cc9651');addCar(5.2,28,'#519e9e',Math.PI);addCar(5.6,70,'#e5d2af');addCar(-5,99,'#ba6557');addCar(5,120,'#aec7bb',Math.PI);
+  const cruiser=addCar(.5,16,'#e2e4d1',Math.PI*.49,'police');
+  s.police.push({x:-4.8,z:14,color:'#234654',skin:'#ad7859',phase:0,stun:0},{x:4.2,z:18,color:'#234654',skin:'#d7a27b',phase:1,stun:0});
+  addCar(6,62,'#e2e4d1',Math.PI,'police');
+  for(const [x,z,color] of [[-12,18,'#e4ad65'],[-13,25,'#c66b61'],[-12.5,36,'#eee1bc'],[12,26,'#458f89'],[13,37,'#d89d77'],[12,52,'#c7ca98']]) s.peds.push({x,z,color,skin:'#c48e69',phase:z*.3,panic:3});
+  s.heat=85;s.wanted=3;s.lastCrime=42;
+  if(name==='mission') {
+    Object.assign(s.player,{x:-4,z:349,magazine:6});
+    for(const c of s.cars)c.z+=343;for(const p of s.peds)p.z+=343;for(const p of s.police)p.z+=343;
+    addCar(-3.4,353,'#b3654a',.14);s.dialogue={name:'TOMAS REYES',role:'HARBOR / PRIVATE CHANNEL',text:'The seal is almost broken. One more shot. Grab the ledger!',until:100};
+    s.particles.push({x:-3.7,z:350.2,y:1.5,life:1,type:'flash'});
+    s.particles.push({x:-3.7,z:350.2,y:1.5,endX:3.2,endZ:365,life:1,type:'tracer'});
   }
-  return Infinity;
-}
-
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+  if(name==='drive') {
+    s.cars=[];s.peds=[];s.police=[];s.wanted=0;s.heat=0;Object.assign(s.player,{x:120,z:180,yaw:0});
+    const car=addCar(120,180,'#d17b4a');car.speed=24;s.player.car=car;
+    addCar(125.3,186,'#f0d3aa',Math.PI);addCar(115.4,202,'#60aaa2');addCar(125,218,'#f3d6a4');addCar(115,245,'#b6594e');addCar(125,258,'#587c8c');addCar(115,287,'#dfb467');
+    for(let i=0;i<5;i++)s.peds.push({x:130,z:205+i*13,color:'#e0c08b',skin:'#b9845f',phase:i});
+    Object.assign(s.mission,{index:0,stage:1,active:true});s.dialogue=null;
+    // Coast delivery kiosk sits beside the eastern promenade for this exhibit.
+    s.shotDestination={x:125,z:295};
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
-  }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
-}
+  if(name==='title') {s.player.x=2;s.player.z=4;s.player.yaw=.1;s.player.car=null;s.wanted=0;s.heat=0;s.police=[];s.cars=s.cars.filter(c=>c.type!=='police');}
+  H.updateCamera(s,0,true);
+  if(name==='title')Object.assign(s.camera,{x:-1,z:-10,y:5,yaw:.1,horizon:288});
+};
